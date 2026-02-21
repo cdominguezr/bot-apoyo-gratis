@@ -3,17 +3,17 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Bot de Acompañamiento</title>
+    <title>Acompañamiento Humano</title>
     <style>
-        body { font-family: sans-serif; background: #f4f4f9; display: flex; justify-content: center; padding: 20px; }
-        #chat-container { width: 100%; max-width: 500px; background: white; border-radius: 8px; box-shadow: 0 2px 10px rgba(0,0,0,0.1); display: flex; flex-direction: column; height: 80vh; }
-        #log { flex: 1; overflow-y: auto; padding: 20px; border-bottom: 1px solid #eee; }
-        .line { margin-bottom: 15px; line-height: 1.4; }
-        .u { color: #2c3e50; font-weight: bold; text-align: right; }
-        .b { color: #555; background: #f0f0f0; padding: 10px; border-radius: 8px; display: inline-block; }
-        #input-area { padding: 20px; display: flex; gap: 10px; }
-        input { flex: 1; padding: 10px; border: 1px solid #ddd; border-radius: 4px; outline: none; }
-        button { padding: 10px 20px; background: #4a90e2; color: white; border: none; border-radius: 4px; cursor: pointer; }
+        body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; background: #f4f7f6; display: flex; justify-content: center; padding: 20px; margin: 0; }
+        #chat-container { width: 100%; max-width: 500px; background: white; border-radius: 15px; box-shadow: 0 10px 25px rgba(0,0,0,0.05); display: flex; flex-direction: column; height: 90vh; margin-top: 20px; }
+        #log { flex: 1; overflow-y: auto; padding: 20px; display: flex; flex-direction: column; gap: 12px; }
+        .line { max-width: 85%; padding: 12px 16px; border-radius: 18px; font-size: 15px; line-height: 1.5; word-wrap: break-word; }
+        .u { align-self: flex-end; background: #007aff; color: white; border-bottom-right-radius: 4px; }
+        .b { align-self: flex-start; background: #f0f0f2; color: #1c1c1e; border-bottom-left-radius: 4px; }
+        #input-area { padding: 15px; border-top: 1px solid #eee; display: flex; gap: 10px; background: #fff; border-bottom-left-radius: 15px; border-bottom-right-radius: 15px; }
+        input { flex: 1; padding: 12px; border: 1px solid #ddd; border-radius: 25px; outline: none; font-size: 15px; padding-left: 20px; }
+        button { background: none; border: none; color: #007aff; font-weight: bold; cursor: pointer; padding: 0 15px; font-size: 16px; }
     </style>
 </head>
 <body>
@@ -21,8 +21,8 @@
 <div id="chat-container">
     <div id="log"></div>
     <div id="input-area">
-        <input type="text" id="msg" placeholder="Escribe aquí..." autofocus>
-        <button id="send">Enviar</button>
+        <input type="text" id="msg" placeholder="Escribe aquí..." autofocus autocomplete="off">
+        <button id="send" type="button">Enviar</button>
     </div>
 </div>
 
@@ -31,11 +31,9 @@
   const inputEl = document.getElementById("msg");
   const sendBtn = document.getElementById("send");
 
-  const LS_KEY = "bot_apoyo_claudio_v2";
+  const LS_KEY = "bot_metamodelo_calido_v4";
 
-  // =========================
-  // Estado y Persistencia
-  // =========================
+  // --- Estado y Persistencia ---
   function loadState() {
     try {
       const raw = localStorage.getItem(LS_KEY);
@@ -47,110 +45,147 @@
     try { localStorage.setItem(LS_KEY, JSON.stringify(state)); } catch {}
   }
 
-  const defaultState = {
+  const state = loadState() || {
     nombre_usuario: null,
-    genero: "indeterminado",
     nombre_conocido: false,
-    presented: false,
-    waitingForSpecifics: false
+    turns: 0,
+    mm: { last: null, streak: 0 }
   };
 
-  const state = loadState() || { ...defaultState };
-
-  // =========================
-  // Utilidades de Lenguaje
-  // =========================
+  // --- Utilidades ---
   function pick(arr) { return arr[Math.floor(Math.random() * arr.length)]; }
-  
   function norm(s) { return (s || "").trim().toLowerCase(); }
 
   function addLine(text, cls) {
     const p = document.createElement("div");
-    p.className = "line " + (cls || "");
+    p.className = "line " + cls;
     p.textContent = text;
     logEl.appendChild(p);
     logEl.scrollTop = logEl.scrollHeight;
   }
 
-  function detectarGenero(nombre) {
-    const n = norm(nombre);
-    return n.endsWith("o") ? "masculino" : (n.endsWith("a") ? "femenino" : "indeterminado");
-  }
-
-  // =========================
-  // Motor de Respuesta (Metamodelo)
-  // =========================
+  // --- Lógica de Respuesta ---
   function responder(msg) {
     const t = (msg || "").trim();
     const e = norm(t);
     const nombre = state.nombre_usuario || "";
 
-    // 1. Saludo Inicial Cotidiano
-    if (!state.presented) {
-      state.presented = true;
+    // Governor anti-bucle
+    function setMM(tag){
+      if (state.mm.last === tag) state.mm.streak++;
+      else { state.mm.last = tag; state.mm.streak = 1; }
       saveState();
-      const saludos = ["¡Hola! Qué bueno verte. ¿Cómo va todo?", "¡Wena! ¿Cómo te trata el día?", "¡Hey! ¿Cómo has estado?"];
-      return `${pick(saludos)} ¿Te gustaría conversar sobre algún tema en específico o hay algo que te esté aquejando?`;
     }
 
-    // 2. Captura de Nombre (Si no se conoce)
+    function forceExample() {
+      setMM("EJEMPLO");
+      const v = nombre ? `, ${nombre}` : "";
+      return `Para que podamos verlo con más nitidez${v}, cuéntame un ejemplo real: ¿qué pasó, quiénes estaban y qué se dijo exactamente?`;
+    }
+
+    // 0. Inicio o Rompehielos
+    if (state.turns === 0) {
+      state.turns++;
+      saveState();
+      const saludos = ["¡Hola! ¿Cómo va todo por allá?", "¡Wena! ¿Cómo te trata el día?", "¡Hey! ¿Cómo has estado?"];
+      return `${pick(saludos)} ¿Cómo te sientes hoy? ¿Te gustaría conversar sobre algo específico o hay algo que te aqueje?`;
+    }
+    state.turns++;
+
+    // 1. Registro de Nombre
     if (!state.nombre_conocido && t.split(" ").length === 1 && t.length > 2) {
-      state.nombre_usuario = t.charAt(0).toUpperCase() + t.slice(1).toLowerCase();
-      state.nombre_conocido = true;
-      state.genero = detectarGenero(state.nombre_usuario);
-      saveState();
-      return `Genial, ${state.nombre_usuario}. ¿Cómo te sientes hoy? ¿Hay algo en particular que quieras soltar o conversar?`;
+      const noNombres = ["mal","bien","fome","cansado","cansada","triste","estresado","estresada","ansiedad","angustia","si","sí","ya","ok","hola","hey"];
+      if (!noNombres.includes(e)) {
+        state.nombre_usuario = t.charAt(0).toUpperCase() + t.slice(1).toLowerCase();
+        state.nombre_conocido = true;
+        saveState();
+        return `Registrado, ${state.nombre_usuario}. Cuéntame, ¿qué es eso que quieres que miremos con precisión hoy?`;
+      }
     }
 
-    // 3. Confirmación de interés (Hacia lo específico)
-    const si = ["si", "sí", "ya", "bueno", "dale", "tengo algo", "quiero"];
-    if (si.some(word => e === word || e.includes("quiero hablar")) || (state.turns === 1 && !state.nombre_conocido)) {
-      state.waitingForSpecifics = true;
-      saveState();
-      return `Te leo. ¿Qué cosa específicamente? Cuéntame un poco más para entender por dónde va la mano.`;
+    if (!t) return "¿Qué cosa específicamente te gustaría precisar?";
+    if (state.mm.streak >= 2) return forceExample();
+
+    const hasAny = (arr) => arr.some(w => e.includes(w));
+
+    // A) Comparativos
+    if (hasAny(["mejor","peor","más","mas","menos","igual","suficiente","demasiado","muy poco"])) {
+      setMM("COMPARATIVO");
+      return `Cuando dices "${t}", ¿respecto a qué lo comparas exactamente? ¿Cuál sería tu punto de referencia?`;
     }
 
-    // 4. Metamodelo: Desafío a Generalizaciones
-    if (e.includes("siempre") || e.includes("nunca") || e.includes("todo") || e.includes("nada")) {
-      return `¿${e.includes("todo") ? "Todo" : "Siempre"} específicamente? ¿Qué está ocurriendo justo ahora que te hace sentir así?`;
+    // B) Generalizaciones
+    if (hasAny(["siempre","nunca","todos","todas","nadie","todo","nada"])) {
+      setMM("UNIVERSAL");
+      return `¿"${t}" de forma absoluta? Fíjate si puedes recordar una excepción: ¿cuándo NO ocurrió de esa manera?`;
     }
 
-    // 5. Metamodelo: Anclaje al cuerpo
-    if (e.includes("mal") || e.includes("angustia") || e.includes("estrés") || e.includes("cansado") || e.includes("ansiedad")) {
-      return `¿Cómo se siente eso en el cuerpo ahora mismo, ${nombre}? ¿En qué parte específicamente notas esa sensación?`;
+    // C) Modales
+    if (hasAny(["tengo que","debo","hay que","necesito","no puedo","imposible","no se puede"])) {
+      setMM("MODAL");
+      return `¿Qué es lo que te lo impide en este momento? ¿Y qué pasaría si eligieras no hacerlo?`;
     }
 
-    // 6. Seguimiento Natural
-    if (t.length > 0) {
-      const preguntas = [
-        "Entiendo. ¿Y qué más hay ahí?",
-        `¿Cómo te afecta eso específicamente, ${nombre}?`,
-        "Te sigo, cuéntame un poco más sobre eso.",
-        "¿Qué es lo que más te hace ruido de eso que mencionas?"
-      ];
-      return pick(preguntas);
+    // D) Causa-efecto
+    if (hasAny(["me hace","me hizo","me obliga","me obligó","por tu culpa","por culpa","me provoca"])) {
+      setMM("CAUSA_EFECTO");
+      return `¿Cómo ocurre ese proceso? Describe paso a paso cómo eso que mencionas termina produciendo ese efecto en ti.`;
     }
 
-    return "Cuéntame lo que necesites, aquí estoy.";
+    // E) Lectura mental
+    if (hasAny(["piensan que","creen que","saben que","me juzgan","seguro que","obvio que"])) {
+      setMM("LECTURA_MENTAL");
+      return `¿En qué te basas para notar eso? ¿Qué hechos o palabras observables te dan esa señal?`;
+    }
+
+    // F) Omisiones
+    if (hasAny(["eso","algo","cosas","así","asi","tema","situación","situacion"])) {
+      setMM("OMISION");
+      return `¿A qué te refieres con "${t}" específicamente? Ayúdame a entender: ¿qué, quién, cuándo?`;
+    }
+
+    // G) Nominalizaciones
+    const nomKeys = ["presión","presion","ansiedad","angustia","respeto","confianza","motivación","motivacion","estrés","estres","miedo","rabia","culpa","fracaso","éxito","exito","control","rechazo"];
+    if (/^(la|el|mi|tu|su)\s+\w+/i.test(t) && nomKeys.some(k => e.includes(k))) {
+      setMM("NOMINALIZACION");
+      return `Si "${t}" fuera una acción, ¿quién está haciendo qué y de qué manera?`;
+    }
+
+    // H) Base
+    setMM("BASE");
+    const v = nombre ? `, ${nombre}` : "";
+    const preguntasBase = [
+      `¿Qué quieres decir con "${t}" específicamente${v}?`,
+      `¿Cómo ocurre eso en tu experiencia concreta?`,
+      `¿Qué parte de eso que mencionas te gustaría precisar más ahora?`,
+      `Te leo. ¿Puedes darme un poco más de detalle sobre eso?`
+    ];
+    return pick(preguntasBase);
   }
 
-  // UI Events
+  // --- Eventos ---
   function send() {
     const v = inputEl.value;
     if (!v) return;
     inputEl.value = "";
-    addLine("Tú: " + v, "u");
+    addLine(v, "u");
     setTimeout(() => {
       const out = responder(v);
-      addLine("Bot: " + out, "b");
+      addLine(out, "b");
     }, 400);
   }
 
   sendBtn.addEventListener("click", send);
   inputEl.addEventListener("keydown", (e) => { if (e.key === "Enter") send(); });
 
-  addLine("Sistema listo. Escribe algo para comenzar.", "b");
+  // Inicialización
+  window.addEventListener("load", () => {
+    if (state.turns === 0) {
+      addLine(responder(""), "b");
+    } else {
+      addLine(`Hola de nuevo${state.nombre_usuario ? ", " + state.nombre_usuario : ""}. ¿En qué estamos?`, "b");
+    }
+  });
 </script>
-
 </body>
 </html>
