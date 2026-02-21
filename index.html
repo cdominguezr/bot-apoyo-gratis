@@ -1,263 +1,80 @@
- <!DOCTYPE html>
-<html lang="es">
-<head>
-  <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Acompañamiento Humano</title>
-  <style>
-    body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; background:#f4f7f6; display:flex; justify-content:center; padding:20px; margin:0; }
-    #chat-container { width:100%; max-width:500px; background:#fff; border-radius:15px; box-shadow:0 10px 25px rgba(0,0,0,0.05); display:flex; flex-direction:column; height:90vh; margin-top:20px; overflow:hidden; }
-    #topbar { display:flex; justify-content:space-between; align-items:center; padding:10px 14px; border-bottom:1px solid #eee; background:#fff; }
-    #topbar .title { font-weight:600; font-size:14px; color:#111827; }
-    #reset { border:1px solid #e5e7eb; background:#fff; color:#111827; border-radius:999px; padding:6px 10px; font-size:12px; cursor:pointer; }
-    #log { flex:1; overflow-y:auto; padding:20px; display:flex; flex-direction:column; gap:12px; }
-    .line { max-width:85%; padding:12px 16px; border-radius:18px; font-size:15px; line-height:1.5; word-wrap:break-word; white-space:pre-wrap; }
-    .u { align-self:flex-end; background:#007aff; color:#fff; border-bottom-right-radius:4px; }
-    .b { align-self:flex-start; background:#f0f0f2; color:#1c1c1e; border-bottom-left-radius:4px; }
-    #input-area { padding:15px; border-top:1px solid #eee; display:flex; gap:10px; background:#fff; }
-    input { flex:1; padding:12px; border:1px solid #ddd; border-radius:25px; outline:none; font-size:15px; padding-left:20px; }
-    button#send { background:none; border:none; color:#007aff; font-weight:bold; cursor:pointer; padding:0 15px; font-size:16px; }
-  </style>
-</head>
-<body>
+export default {
+  async fetch(request, env) {
+    // ---- CORS (para que GitHub Pages pueda llamar al Worker) ----
+    const corsHeaders = {
+      "Access-Control-Allow-Origin": "*",
+      "Access-Control-Allow-Methods": "POST, OPTIONS",
+      "Access-Control-Allow-Headers": "Content-Type",
+    };
 
-<div id="chat-container">
-  <div id="topbar">
-    <div class="title">Sistema listo. Escribe algo para comenzar.</div>
-    <button id="reset" type="button" title="Borra memoria local">Reset</button>
-  </div>
+    if (request.method === "OPTIONS") {
+      return new Response(null, { headers: corsHeaders });
+    }
 
-  <div id="log"></div>
+    if (request.method !== "POST") {
+      return new Response("Use POST", { status: 405, headers: corsHeaders });
+    }
 
-  <div id="input-area">
-    <input type="text" id="msg" placeholder="Escribe aquí..." autofocus autocomplete="off" />
-    <button id="send" type="button">Enviar</button>
-  </div>
-</div>
-
-<script>
-  // =========================
-  // Persistencia
-  // =========================
-  const LS_KEY = "sistema_humano_v1";
-
-  function safeLoad() {
     try {
-      const raw = localStorage.getItem(LS_KEY);
-      return raw ? JSON.parse(raw) : null;
-    } catch { return null; }
-  }
+      const body = await request.json();
+      const message = String(body?.message || "");
+      const history = Array.isArray(body?.history) ? body.history : [];
 
-  function safeSave(obj) {
-    try { localStorage.setItem(LS_KEY, JSON.stringify(obj)); } catch {}
-  }
+      // Guardrails mínimos (evita payloads gigantes)
+      const safeHistory = history
+        .slice(-12)
+        .map(m => ({
+          role: m?.role === "assistant" ? "assistant" : "user",
+          content: String(m?.content || "").slice(0, 2000),
+        }));
 
-  // =========================
-  // SistemaHumano (tu lógica)
-  // + parches necesarios
-  // =========================
-  class SistemaHumano {
-    /**
-     * Protocolo de inicio único (misma intención que tu dataclass):
-     * - Pregunta el nombre solo si nombre_usuario es None
-     * - Ajusta "género lingüístico" con heurística mínima
-     * - Mantiene neutralidad
-     *
-     * PARCHES:
-     * - Solo registra nombre si input parece nombre (evita "de qué", "hola", "jajaja")
-     * - Anti-loop básico por tags repetidos
-     */
-    constructor(state) {
-      this.state = state || {
-        nombre_usuario: null,
-        genero: "indeterminado",
-        nombre_conocido: false,
-        // anti-loop / governor
-        mm: { last: null, streak: 0 }
-      };
-    }
+      const system = [
+        "Eres 'Acompañamiento Humano'.",
+        "Sé breve, neutral y claro.",
+        "No diagnostiques, no des terapia clínica, no prometas curas.",
+        "Evita bucles repetitivos: si falta info, pide un ejemplo concreto (qué pasó, con quién, qué se dijo/hizo).",
+        "No inventes datos del usuario.",
+      ].join(" ");
 
-    iniciar_protocolo(entrada) {
-      entrada = (entrada || "").trim();
+      const messages = [
+        { role: "system", content: system },
+        ...safeHistory,
+        { role: "user", content: message.slice(0, 4000) },
+      ];
 
-      if (!this.state.nombre_conocido) {
-        return this._registrar_identidad(entrada);
-      }
-      return this.procesar_estado(entrada);
-    }
+      // ---- OpenAI Responses API ----
+      const r = await fetch("https://api.openai.com/v1/responses", {
+        method: "POST",
+        headers: {
+          "Authorization": `Bearer ${env.OPENAI_API_KEY}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          model: "gpt-4.1-mini",
+          input: messages,
+          temperature: 0.4,
+        }),
+      });
 
-    _registrar_identidad(texto) {
-      // No forzamos registro si viene vacío
-      if (!texto) {
-        this._setMM("NOMBRE_VACIO");
-        return "Nota por un momento si quieres nombrar este espacio.";
+      if (!r.ok) {
+        const errText = await r.text();
+        return new Response(
+          JSON.stringify({ reply: "Error conectando a IA.", detail: errText }),
+          { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+        );
       }
 
-      // PARCHE CRÍTICO: no registrar cualquier cosa como nombre
-      if (!this._es_nombre_valido(texto)) {
-        this._setMM("NOMBRE_INVALIDO");
+      const data = await r.json();
+      const reply = (data.output_text || "").trim();
 
-        // Si insiste con inputs cortos/vagos, no loops: fuerza instrucción concreta
-        if (this.state.mm.last === "NOMBRE_INVALIDO" && this.state.mm.streak >= 2) {
-          this.state.mm.streak = 0;
-          this._persist();
-          return "Si te parece, escribe solo tu nombre (una palabra). Si no, podemos seguir sin nombre.";
-        }
-
-        return "Si quieres, dime tu nombre (una sola palabra). Si no, podemos seguir igual.";
-      }
-
-      // Registro
-      this.state.nombre_usuario = this._capitalizar(texto);
-      this.state.nombre_conocido = true;
-
-      // Heurística mínima (solo para concordancia lingüística)
-      this.state.genero = this._detectar_genero(this.state.nombre_usuario);
-
-      const pronombre = this._pronombre_reflexivo();
-      this._setMM("NOMBRE_OK");
-
-      return `Registrado. Nota por un momento cómo se siente nombrar este espacio, ${this.state.nombre_usuario}. Ahora, simplemente descansa en ${pronombre}.`;
+      return new Response(JSON.stringify({ reply: reply || "Te leo. ¿Puedes decirlo de otra forma?" }), {
+        headers: { ...corsHeaders, "Content-Type": "application/json" },
+      });
+    } catch (e) {
+      return new Response(JSON.stringify({ reply: "Error interno." }), {
+        status: 500,
+        headers: { ...corsHeaders, "Content-Type": "application/json" },
+      });
     }
-
-    procesar_estado(entrada) {
-      // Acompañamiento mínimo: no repara, no diagnostica, no épica.
-      const pronombre = this._pronombre_reflexivo();
-
-      // PARCHE anti-loop: si el usuario mete ruido corto, no contaminar estado
-      if (this._es_ruido_corto(entrada)) {
-        this._setMM("RUIDO");
-        // no “castigar” con repeticiones
-        return `Estoy aquí contigo. Cuando quieras, pon una frase simple sobre lo que está pasando.`;
-      }
-
-      // Governor: si se repite demasiado el mismo tag BASE/ESTADO, fuerza ejemplo concreto
-      this._setMM("ESTADO");
-      if (this.state.mm.last === "ESTADO" && this.state.mm.streak >= 4) {
-        this.state.mm.streak = 0;
-        this._persist();
-        const n = this.state.nombre_usuario ? `, ${this.state.nombre_usuario}` : "";
-        return `Para verlo con más nitidez${n}: cuéntame un ejemplo real (qué pasó, con quién, y qué se dijo/hizo).`;
-      }
-
-      return `Fíjate en lo que ocurre cuando simplemente estás aquí, ${this.state.nombre_usuario}. Descansa en ${pronombre}.`;
-    }
-
-    // --------------------
-    // Utilidades internas
-    // --------------------
-
-    _detectar_genero(nombre) {
-      const n = (nombre || "").toLowerCase();
-      if (n.endsWith("o")) return "masculino";
-      if (n.endsWith("a")) return "femenino";
-      return "indeterminado";
-    }
-
-    _pronombre_reflexivo() {
-      if (this.state.genero === "masculino") return "ti mismo";
-      if (this.state.genero === "femenino") return "ti misma";
-      return "ti";
-    }
-
-    _capitalizar(s) {
-      const t = (s || "").trim();
-      return t.charAt(0).toUpperCase() + t.slice(1).toLowerCase();
-    }
-
-    _setMM(tag) {
-      if (this.state.mm.last === tag) this.state.mm.streak++;
-      else { this.state.mm.last = tag; this.state.mm.streak = 1; }
-      this._persist();
-    }
-
-    _persist() {
-      safeSave(this.state);
-    }
-
-    _es_ruido_corto(t) {
-      const s = (t || "").trim().toLowerCase();
-      if (!s) return true;
-      if (s.length < 4) return true;
-      return /^(jaja+|haha+|ok|ya|sí|si|hola|hey|xD)$/i.test(s);
-    }
-
-    _es_nombre_valido(texto) {
-      const t = (texto || "").trim();
-
-      // 1) Debe ser UNA sola palabra
-      if (t.split(/\s+/).length !== 1) return false;
-
-      // 2) Largo mínimo
-      if (t.length < 3) return false;
-
-      // 3) Debe ser letras (permitimos acentos, ñ, guion)
-      //    (evita "de", "qué", "??", "123")
-      if (!/^[A-Za-zÁÉÍÓÚÜÑáéíóúüñ-]+$/.test(t)) return false;
-
-      // 4) Stoplist (evita registrar estados/comandos como nombre)
-      const e = t.toLowerCase();
-      const noNombres = new Set([
-        "mal","bien","fome","cansado","cansada","triste","estresado","estresada",
-        "ansiedad","angustia","si","sí","ya","ok","hola","hey","jajaja","jaja",
-        "de","que","qué","sobre","nada","todo"
-      ]);
-      if (noNombres.has(e)) return false;
-
-      return true;
-    }
-  }
-
-  // =========================
-  // UI Chat Wiring
-  // =========================
-  const logEl = document.getElementById("log");
-  const inputEl = document.getElementById("msg");
-  const sendBtn = document.getElementById("send");
-  const resetBtn = document.getElementById("reset");
-
-  function addLine(text, cls) {
-    const p = document.createElement("div");
-    p.className = "line " + cls;
-    p.textContent = text;
-    logEl.appendChild(p);
-    logEl.scrollTop = logEl.scrollHeight;
-  }
-
-  // Cargar estado y levantar sistema
-  const initialState = safeLoad() || null;
-  const sistema = new SistemaHumano(initialState);
-
-  function send() {
-    const v = inputEl.value;
-    if (!v) return;
-    inputEl.value = "";
-
-    addLine(v, "u");
-
-    setTimeout(() => {
-      const out = sistema.iniciar_protocolo(v);
-      addLine(out, "b");
-    }, 200);
-  }
-
-  sendBtn.addEventListener("click", send);
-  inputEl.addEventListener("keydown", (e) => {
-    if (e.key === "Enter") send();
-  });
-
-  resetBtn.addEventListener("click", () => {
-    try { localStorage.removeItem(LS_KEY); } catch {}
-    location.reload();
-  });
-
-  // Inicio
-  window.addEventListener("load", () => {
-    // Primer mensaje del sistema (sin forzar nombre)
-    addLine(sistema.iniciar_protocolo(""), "b");
-    inputEl.focus();
-  });
-</script>
-
-</body>
-</html>
+  },
+};
