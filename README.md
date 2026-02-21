@@ -1,4 +1,4 @@
-# Bot de Apoyo Gratis
+index.html# Bot de Apoyo Gratis
 
 Este proyecto es un chat bot sencillo de acompañamiento conversacional.
 Está pensado para ofrecer un espacio de pausa, atención y claridad básica.
