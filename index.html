@@ -1,18 +1,75 @@
-     <script>
+<script>
   const logEl = document.getElementById("log");
   const inputEl = document.getElementById("msg");
   const sendBtn = document.getElementById("send");
 
-  const state = {
+  // =========================
+  // Persistencia (1 vez)
+  // =========================
+  const LS_KEY = "bot_apoyo_gratis_v1";
+  function loadState() {
+    try {
+      const raw = localStorage.getItem(LS_KEY);
+      return raw ? JSON.parse(raw) : null;
+    } catch {
+      return null;
+    }
+  }
+  function saveState() {
+    try { localStorage.setItem(LS_KEY, JSON.stringify(state)); } catch {}
+  }
+
+  const defaultState = {
     nombre_usuario: null,
     genero: "indeterminado",
     nombre_conocido: false,
-    last_reply: "",
-    turn: 0
+    presented: false,          // <- presentación 1 vez
+    turns: 0
   };
 
+  const state = loadState() || { ...defaultState };
+
+  // =========================
+  // Utilidades
+  // =========================
+  function addLine(text, cls) {
+    const p = document.createElement("div");
+    p.className = "line " + (cls || "");
+    p.textContent = text;
+    logEl.appendChild(p);
+    logEl.scrollTop = logEl.scrollHeight;
+  }
+
+  function norm(s) {
+    return (s || "").trim().toLowerCase();
+  }
+
+  const GREETINGS = new Set([
+    "hola","holaa","buenas","buenos dias","buenas tardes","buenas noches",
+    "hi","hello","hey","wena","wenas","ola","holi"
+  ]);
+
+  const SMALLTALK = [
+    "¿Cómo te va hoy?",
+    "¿Cómo has estado?",
+    "¿Qué tal tu día?",
+    "¿En qué te ayudo?"
+  ];
+
+  const INFORMAL_GREETINGS = [
+    "¡Hola!",
+    "¡Buenas!",
+    "¡Hey!",
+    "¡Qué tal!",
+    "¡Wena!"
+  ];
+
+  function pick(arr) {
+    return arr[Math.floor(Math.random() * arr.length)];
+  }
+
   function detectarGenero(nombre) {
-    const n = (nombre || "").toLowerCase();
+    const n = norm(nombre);
     if (n.endsWith("o")) return "masculino";
     if (n.endsWith("a")) return "femenino";
     return "indeterminado";
@@ -24,114 +81,94 @@
     return "ti";
   }
 
-  function addLine(text, cls) {
-    const p = document.createElement("div");
-    p.className = "line " + (cls || "");
-    p.textContent = text;
-    logEl.appendChild(p);
-    logEl.scrollTop = logEl.scrollHeight;
-  }
-
-  // --- Pools de respuesta (cortos, humanos, no “disco rayado”) ---
-  const RESP_SALUDO = [
-    "Te leo. ¿Qué está pasando ahora, en una frase?",
-    "Ok. ¿Quieres desahogarte o ordenar ideas?",
-    "Estoy aquí. ¿Qué necesitas de este espacio hoy?"
-  ];
-
-  const RESP_CALMA = [
-    "Respira 10 segundos: inhalas 4, sostienes 2, exhalas 6.",
-    "Baja la velocidad un 10%. Solo eso.",
-    "Nota 3 cosas: un sonido, una sensación, un punto de apoyo."
-  ];
-
-  const RESP_FOCO = [
-    "Vamos a lo concreto: ¿qué parte de esto sí está bajo tu control hoy?",
-    "Elige un micro-paso de 1% para los próximos 5 minutos.",
-    "¿Qué sería una versión un poquito más ordenada de este momento?"
-  ];
-
-  const RESP_DECISION = [
-    "Dame 2 opciones. Luego vemos costo y beneficio de cada una.",
-    "¿Qué dato te falta para decidir con calma?",
-    "Si decides hoy: ¿qué es lo peor razonable que podría pasar?"
-  ];
-
-  const RESP_CIERRE = [
-    "Si te sirve, nos quedamos con una cosa simple y seguimos.",
-    "No hay que resolver todo ahora. Solo mantenerte cerca de lo real.",
-    "Ok. Un paso a la vez."
-  ];
-
-  function pickDifferent(arr) {
-    if (!arr || arr.length === 0) return "";
-    if (arr.length === 1) return arr[0];
-    let r = arr[Math.floor(Math.random() * arr.length)];
-    if (r === state.last_reply) {
-      const idx = (arr.indexOf(r) + 1) % arr.length;
-      r = arr[idx];
-    }
-    state.last_reply = r;
-    return r;
-  }
-
-  function classify(text) {
-    const t = (text || "").toLowerCase().trim();
-    if (!t) return "calma";
-    if (/(hola|buenas|hey|hello)/.test(t)) return "saludo";
-    if (/(decidir|elige|opción|opciones|qué hago|recomienda|prioriza|ayúdame a elegir)/.test(t)) return "decision";
-    if (/(ansiedad|miedo|pena|triste|rabia|estres|estrés|pánico|angustia|cansad)/.test(t)) return "calma";
-    return "foco";
-  }
-
-  function iniciarProtocolo(msg) {
+  function esProbableNombre(msg) {
+    // Regla simple y práctica:
+    // - 1 palabra
+    // - letras (incluye acentos/ñ)
+    // - no es saludo
+    // - largo razonable
     const t = (msg || "").trim();
-    state.turn++;
+    const e = norm(t);
+    if (!t) return false;
+    if (GREETINGS.has(e)) return false;
+    // una sola palabra
+    if (t.split(/\s+/).length !== 1) return false;
+    // solo letras
+    if (!/^[A-Za-zÁÉÍÓÚÜÑáéíóúüñ]+$/.test(t)) return false;
+    if (t.length < 2 || t.length > 18) return false;
+    return true;
+  }
 
-    // 1) Captura nombre (solo la primera vez)
-    if (!state.nombre_conocido) {
-      if (!t) return "Nota por un momento si quieres nombrar este espacio.";
+  // =========================
+  // Lógica del bot
+  // =========================
+  function introOnce() {
+    state.presented = true;
+    saveState();
+    return [
+      "Hola 😊 ¿Cómo te va? ¿Cómo has estado?",
+      "Me presento: soy **Bot Apoyo Gratis**.",
+      "¿En qué te ayudo hoy?"
+    ].join("\n");
+  }
+
+  function saludoVariante(nombre) {
+    const hi = pick(INFORMAL_GREETINGS);
+    const tail = pick(SMALLTALK);
+    if (nombre) return `${hi} ${nombre}. ${tail}`;
+    return `${hi} ${tail}`;
+  }
+
+  function responder(msg) {
+    state.turns++;
+    const t = (msg || "").trim();
+    const e = norm(t);
+
+    // 0) Presentación SOLO la primera vez (aunque el usuario diga cualquier cosa)
+    if (!state.presented) {
+      return introOnce();
+    }
+
+    // 1) Si el usuario saluda, responde saludo informal (no registra nombre)
+    if (GREETINGS.has(e)) {
+      return saludoVariante(state.nombre_usuario);
+    }
+
+    // 2) Si aún no tenemos nombre y el input parece nombre → registrar
+    if (!state.nombre_conocido && esProbableNombre(t)) {
       state.nombre_usuario = t.charAt(0).toUpperCase() + t.slice(1).toLowerCase();
       state.nombre_conocido = true;
       state.genero = detectarGenero(state.nombre_usuario);
-
-      const nombre = state.nombre_usuario;
-      // primera respuesta: bienvenida + una sola guía corta (no siempre “descansa…”)
-      return `Registrado, ${nombre}. ${pickDifferent(RESP_SALUDO)}`;
+      saveState();
+      return `Genial, ${state.nombre_usuario}. ${pick(SMALLTALK)}`;
     }
 
-    const nombre = state.nombre_usuario || "humano";
-    const kind = classify(t);
-
-    // 2) Respuesta por intención + variación
-    if (kind === "saludo") {
-      return `${pickDifferent(RESP_SALUDO)} (${nombre})`;
+    // 3) Respuestas simples (sin ponerse místico)
+    const nombre = state.nombre_usuario ? state.nombre_usuario : "";
+    if (e.includes("mal") || e.includes("cans") || e.includes("estres") || e.includes("ansio")) {
+      return `${nombre ? nombre + ", " : ""}te leo. ¿Qué es lo que más te está pesando ahora: mente, cuerpo o una situación?`;
     }
 
-    if (kind === "decision") {
-      return `${pickDifferent(RESP_DECISION)} (${nombre})`;
+    if (e.includes("gracias")) {
+      return `${nombre ? "De nada, " + nombre + "." : "De nada."} ¿Seguimos?`;
     }
 
-    if (kind === "calma") {
-      // alterna calma / cierre para no repetir patrón
-      const base = (state.turn % 2 === 0) ? pickDifferent(RESP_CALMA) : pickDifferent(RESP_CIERRE);
-      return `${base} (${nombre})`;
-    }
-
-    // foco (default útil)
-    return `${pickDifferent(RESP_FOCO)} (${nombre})`;
+    // 4) Default: pregunta útil
+    return `${nombre ? nombre + ", " : ""}cuéntame un poco más: ¿qué pasó o qué necesitas resolver ahora?`;
   }
 
   function send() {
     const v = inputEl.value;
     inputEl.value = "";
     if (!v) return;
+
     addLine("tú: " + v, "u");
-    const out = iniciarProtocolo(v);
+    const out = responder(v);
     addLine("bot: " + out, "b");
     inputEl.focus();
   }
 
+  // UI events
   sendBtn.addEventListener("click", send);
   inputEl.addEventListener("keydown", (e) => {
     if (e.key === "Enter") {
@@ -140,5 +177,6 @@
     }
   });
 
-  addLine("Sistema listo. Escribe tu nombre para iniciar.", "b");
-     </script>
+  // Mensaje inicial (sin profundidad, y coherente con "presentación 1 vez")
+  addLine("Sistema listo. Escribe “hola” para iniciar.", "b");
+</script>
