@@ -1,0 +1,241 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Bot de Apoyo Gratis</title>
+  <style>
+    :root {
+      --bg: #0b1220;
+      --panel: #0f172a;
+      --panel2: #0b1327;
+      --text: #e5e7eb;
+      --muted: #94a3b8;
+      --cyan: #38bdf8;
+      --green: #22c55e;
+      --red: #ef4444;
+      --amber: #f59e0b;
+      --border: rgba(148,163,184,.22);
+      --shadow: rgba(0,0,0,.35);
+      --radius: 14px;
+      --mono: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+      --sans: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, "Apple Color Emoji", "Segoe UI Emoji";
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      min-height: 100vh;
+      color: var(--text);
+      font-family: var(--sans);
+      background:
+        radial-gradient(1200px 800px at 20% 0%, rgba(56,189,248,.12), transparent),
+        radial-gradient(900px 700px at 80% 10%, rgba(34,197,94,.10), transparent),
+        radial-gradient(900px 700px at 50% 100%, rgba(245,158,11,.10), transparent),
+        var(--bg);
+      display: grid;
+      place-items: center;
+      padding: 18px;
+    }
+    .app {
+      width: min(980px, 100%);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      background: linear-gradient(180deg, rgba(15,23,42,.92), rgba(11,18,32,.92));
+      box-shadow: 0 18px 60px var(--shadow);
+      overflow: hidden;
+    }
+    header {
+      display: flex;
+      gap: 14px;
+      align-items: center;
+      padding: 14px 16px;
+      border-bottom: 1px solid var(--border);
+      background: rgba(15, 23, 42, .75);
+    }
+    .dots { display: flex; gap: 8px; margin-right: 6px; }
+    .dot { width: 10px; height: 10px; border-radius: 999px; opacity: .9; }
+    .dot.red { background: var(--red); }
+    .dot.amb { background: var(--amber); }
+    .dot.grn { background: var(--green); }
+    .title h1 {
+      margin: 0;
+      font-size: 14px;
+      letter-spacing: .4px;
+      font-family: var(--mono);
+      font-weight: 700;
+    }
+    .title .sub {
+      color: var(--muted);
+      font-size: 12px;
+      font-family: var(--mono);
+    }
+    .main {
+      padding: 16px;
+    }
+    .terminal {
+      display: grid;
+      grid-template-rows: 1fr auto;
+      gap: 12px;
+    }
+    .log {
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      background: rgba(11,19,39,.45);
+      padding: 12px;
+      overflow: auto;
+      font-family: var(--mono);
+      font-size: 13px;
+      line-height: 1.45;
+      min-height: 360px;
+      max-height: 55vh;
+    }
+    .line { margin: 0 0 10px 0; white-space: pre-wrap; word-break: break-word; }
+    .u { color: var(--cyan); }
+    .b { color: var(--green); }
+    .composer {
+      display: flex;
+      gap: 10px;
+      align-items: center;
+    }
+    .input {
+      flex: 1;
+      display: flex;
+      gap: 10px;
+      align-items: center;
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      background: rgba(11,18,32,.55);
+      padding: 10px 12px;
+    }
+    .prompt {
+      color: var(--cyan);
+      font-family: var(--mono);
+      font-size: 13px;
+    }
+    input[type="text"]{
+      width: 100%;
+      border: 0;
+      outline: 0;
+      background: transparent;
+      color: var(--text);
+      font-family: var(--mono);
+      font-size: 13px;
+    }
+    button {
+      border: 1px solid var(--border);
+      background: rgba(56,189,248,.15);
+      color: var(--text);
+      font-family: var(--mono);
+      font-weight: 700;
+      padding: 10px 14px;
+      border-radius: var(--radius);
+      cursor: pointer;
+    }
+    button:hover { background: rgba(56,189,248,.22); }
+  </style>
+</head>
+<body>
+  <div class="app">
+    <header>
+      <div class="dots">
+        <div class="dot red"></div>
+        <div class="dot amb"></div>
+        <div class="dot grn"></div>
+      </div>
+      <div class="title">
+        <h1>Bot de Apoyo Gratis</h1>
+        <div class="sub">Escribe tu nombre o cómo te sientes</div>
+      </div>
+    </header>
+
+    <div class="main">
+      <section class="terminal">
+        <div id="log" class="log"></div>
+        <div class="composer">
+          <div class="input">
+            <div class="prompt">$</div>
+            <input id="msg" type="text" placeholder='Escribe aquí… (ej: "Claudio", "no estoy bien")' autocomplete="off" />
+          </div>
+          <button id="send">Enviar</button>
+        </div>
+      </section>
+    </div>
+  </div>
+
+  <script>
+    const logEl = document.getElementById("log");
+    const inputEl = document.getElementById("msg");
+    const sendBtn = document.getElementById("send");
+
+    const state = {
+      nombre_usuario: null,
+      genero: "indeterminado",
+      nombre_conocido: false
+    };
+
+    function detectarGenero(nombre) {
+      const n = (nombre || "").toLowerCase();
+      if (n.endsWith("o")) return "masculino";
+      if (n.endsWith("a")) return "femenino";
+      return "indeterminado";
+    }
+
+    function pronombreReflexivo(genero) {
+      if (genero === "masculino") return "ti mismo";
+      if (genero === "femenino") return "ti misma";
+      return "ti";
+    }
+
+    function addLine(text, cls) {
+      const p = document.createElement("div");
+      p.className = "line " + (cls || "");
+      p.textContent = text;
+      logEl.appendChild(p);
+      logEl.scrollTop = logEl.scrollHeight;
+    }
+
+    function iniciarProtocolo(msg) {
+      const t = (msg || "").trim();
+
+      if (!state.nombre_conocido) {
+        if (!t) return "Nota por un momento si quieres nombrar este espacio.";
+        state.nombre_usuario = t.charAt(0).toUpperCase() + t.slice(1).toLowerCase();
+        state.nombre_conocido = true;
+        state.genero = detectarGenero(state.nombre_usuario);
+        const pro = pronombreReflexivo(state.genero);
+        return `Registrado. Nota por un momento cómo se siente nombrar este espacio, ${state.nombre_usuario}. Ahora, simplemente descansa en ${pro}.`;
+      }
+
+      const nombre = state.nombre_usuario || "humano";
+      const pro = pronombreReflexivo(state.genero);
+      const e = t.toLowerCase();
+
+      if (e.includes("no estoy bien") || e.includes("mal") || e.includes("cans")) {
+        return `Reconoce sin pelearlo: “esto es lo que hay ahora”. Quédate cerca de lo simple, ${nombre}. Descansa en ${pro}.`;
+      }
+
+      return `Fíjate en lo que ocurre cuando simplemente estás aquí, ${nombre}. Descansa en ${pro}.`;
+    }
+
+    function send() {
+      const v = inputEl.value;
+      inputEl.value = "";
+      if (!v) return;
+      addLine("tú: " + v, "u");
+      const out = iniciarProtocolo(v);
+      addLine("bot: " + out, "b");
+      inputEl.focus();
+    }
+
+    sendBtn.addEventListener("click", send);
+    inputEl.addEventListener("keydown", (e) => {
+      if (e.key === "Enter") {
+        e.preventDefault();
+        send();
+      }
+    });
+
+    addLine("Sistema listo. Escribe tu nombre para iniciar.", "b");
+  </script>
+</body>
+  </html>
