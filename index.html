@@ -1,20 +1,48 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Bot de Acompañamiento</title>
+    <style>
+        body { font-family: sans-serif; background: #f4f4f9; display: flex; justify-content: center; padding: 20px; }
+        #chat-container { width: 100%; max-width: 500px; background: white; border-radius: 8px; box-shadow: 0 2px 10px rgba(0,0,0,0.1); display: flex; flex-direction: column; height: 80vh; }
+        #log { flex: 1; overflow-y: auto; padding: 20px; border-bottom: 1px solid #eee; }
+        .line { margin-bottom: 15px; line-height: 1.4; }
+        .u { color: #2c3e50; font-weight: bold; text-align: right; }
+        .b { color: #555; background: #f0f0f0; padding: 10px; border-radius: 8px; display: inline-block; }
+        #input-area { padding: 20px; display: flex; gap: 10px; }
+        input { flex: 1; padding: 10px; border: 1px solid #ddd; border-radius: 4px; outline: none; }
+        button { padding: 10px 20px; background: #4a90e2; color: white; border: none; border-radius: 4px; cursor: pointer; }
+    </style>
+</head>
+<body>
+
+<div id="chat-container">
+    <div id="log"></div>
+    <div id="input-area">
+        <input type="text" id="msg" placeholder="Escribe aquí..." autofocus>
+        <button id="send">Enviar</button>
+    </div>
+</div>
+
 <script>
   const logEl = document.getElementById("log");
   const inputEl = document.getElementById("msg");
   const sendBtn = document.getElementById("send");
 
+  const LS_KEY = "bot_apoyo_claudio_v2";
+
   // =========================
-  // Persistencia (1 vez)
+  // Estado y Persistencia
   // =========================
-  const LS_KEY = "bot_apoyo_gratis_v1";
   function loadState() {
     try {
       const raw = localStorage.getItem(LS_KEY);
       return raw ? JSON.parse(raw) : null;
-    } catch {
-      return null;
-    }
+    } catch { return null; }
   }
+
   function saveState() {
     try { localStorage.setItem(LS_KEY, JSON.stringify(state)); } catch {}
   }
@@ -23,15 +51,19 @@
     nombre_usuario: null,
     genero: "indeterminado",
     nombre_conocido: false,
-    presented: false,          // <- presentación 1 vez
-    turns: 0
+    presented: false,
+    waitingForSpecifics: false
   };
 
   const state = loadState() || { ...defaultState };
 
   // =========================
-  // Utilidades
+  // Utilidades de Lenguaje
   // =========================
+  function pick(arr) { return arr[Math.floor(Math.random() * arr.length)]; }
+  
+  function norm(s) { return (s || "").trim().toLowerCase(); }
+
   function addLine(text, cls) {
     const p = document.createElement("div");
     p.className = "line " + (cls || "");
@@ -40,143 +72,85 @@
     logEl.scrollTop = logEl.scrollHeight;
   }
 
-  function norm(s) {
-    return (s || "").trim().toLowerCase();
-  }
-
-  const GREETINGS = new Set([
-    "hola","holaa","buenas","buenos dias","buenas tardes","buenas noches",
-    "hi","hello","hey","wena","wenas","ola","holi"
-  ]);
-
-  const SMALLTALK = [
-    "¿Cómo te va hoy?",
-    "¿Cómo has estado?",
-    "¿Qué tal tu día?",
-    "¿En qué te ayudo?"
-  ];
-
-  const INFORMAL_GREETINGS = [
-    "¡Hola!",
-    "¡Buenas!",
-    "¡Hey!",
-    "¡Qué tal!",
-    "¡Wena!"
-  ];
-
-  function pick(arr) {
-    return arr[Math.floor(Math.random() * arr.length)];
-  }
-
   function detectarGenero(nombre) {
     const n = norm(nombre);
-    if (n.endsWith("o")) return "masculino";
-    if (n.endsWith("a")) return "femenino";
-    return "indeterminado";
-  }
-
-  function pronombreReflexivo(genero) {
-    if (genero === "masculino") return "ti mismo";
-    if (genero === "femenino") return "ti misma";
-    return "ti";
-  }
-
-  function esProbableNombre(msg) {
-    // Regla simple y práctica:
-    // - 1 palabra
-    // - letras (incluye acentos/ñ)
-    // - no es saludo
-    // - largo razonable
-    const t = (msg || "").trim();
-    const e = norm(t);
-    if (!t) return false;
-    if (GREETINGS.has(e)) return false;
-    // una sola palabra
-    if (t.split(/\s+/).length !== 1) return false;
-    // solo letras
-    if (!/^[A-Za-zÁÉÍÓÚÜÑáéíóúüñ]+$/.test(t)) return false;
-    if (t.length < 2 || t.length > 18) return false;
-    return true;
+    return n.endsWith("o") ? "masculino" : (n.endsWith("a") ? "femenino" : "indeterminado");
   }
 
   // =========================
-  // Lógica del bot
+  // Motor de Respuesta (Metamodelo)
   // =========================
-  function introOnce() {
-    state.presented = true;
-    saveState();
-    return [
-      "Hola 😊 ¿Cómo te va? ¿Cómo has estado?",
-      "Me presento: soy **Bot Apoyo Gratis**.",
-      "¿En qué te ayudo hoy?"
-    ].join("\n");
-  }
-
-  function saludoVariante(nombre) {
-    const hi = pick(INFORMAL_GREETINGS);
-    const tail = pick(SMALLTALK);
-    if (nombre) return `${hi} ${nombre}. ${tail}`;
-    return `${hi} ${tail}`;
-  }
-
   function responder(msg) {
-    state.turns++;
     const t = (msg || "").trim();
     const e = norm(t);
+    const nombre = state.nombre_usuario || "";
 
-    // 0) Presentación SOLO la primera vez (aunque el usuario diga cualquier cosa)
+    // 1. Saludo Inicial Cotidiano
     if (!state.presented) {
-      return introOnce();
+      state.presented = true;
+      saveState();
+      const saludos = ["¡Hola! Qué bueno verte. ¿Cómo va todo?", "¡Wena! ¿Cómo te trata el día?", "¡Hey! ¿Cómo has estado?"];
+      return `${pick(saludos)} ¿Te gustaría conversar sobre algún tema en específico o hay algo que te esté aquejando?`;
     }
 
-    // 1) Si el usuario saluda, responde saludo informal (no registra nombre)
-    if (GREETINGS.has(e)) {
-      return saludoVariante(state.nombre_usuario);
-    }
-
-    // 2) Si aún no tenemos nombre y el input parece nombre → registrar
-    if (!state.nombre_conocido && esProbableNombre(t)) {
+    // 2. Captura de Nombre (Si no se conoce)
+    if (!state.nombre_conocido && t.split(" ").length === 1 && t.length > 2) {
       state.nombre_usuario = t.charAt(0).toUpperCase() + t.slice(1).toLowerCase();
       state.nombre_conocido = true;
       state.genero = detectarGenero(state.nombre_usuario);
       saveState();
-      return `Genial, ${state.nombre_usuario}. ${pick(SMALLTALK)}`;
+      return `Genial, ${state.nombre_usuario}. ¿Cómo te sientes hoy? ¿Hay algo en particular que quieras soltar o conversar?`;
     }
 
-    // 3) Respuestas simples (sin ponerse místico)
-    const nombre = state.nombre_usuario ? state.nombre_usuario : "";
-    if (e.includes("mal") || e.includes("cans") || e.includes("estres") || e.includes("ansio")) {
-      return `${nombre ? nombre + ", " : ""}te leo. ¿Qué es lo que más te está pesando ahora: mente, cuerpo o una situación?`;
+    // 3. Confirmación de interés (Hacia lo específico)
+    const si = ["si", "sí", "ya", "bueno", "dale", "tengo algo", "quiero"];
+    if (si.some(word => e === word || e.includes("quiero hablar")) || (state.turns === 1 && !state.nombre_conocido)) {
+      state.waitingForSpecifics = true;
+      saveState();
+      return `Te leo. ¿Qué cosa específicamente? Cuéntame un poco más para entender por dónde va la mano.`;
     }
 
-    if (e.includes("gracias")) {
-      return `${nombre ? "De nada, " + nombre + "." : "De nada."} ¿Seguimos?`;
+    // 4. Metamodelo: Desafío a Generalizaciones
+    if (e.includes("siempre") || e.includes("nunca") || e.includes("todo") || e.includes("nada")) {
+      return `¿${e.includes("todo") ? "Todo" : "Siempre"} específicamente? ¿Qué está ocurriendo justo ahora que te hace sentir así?`;
     }
 
-    // 4) Default: pregunta útil
-    return `${nombre ? nombre + ", " : ""}cuéntame un poco más: ¿qué pasó o qué necesitas resolver ahora?`;
+    // 5. Metamodelo: Anclaje al cuerpo
+    if (e.includes("mal") || e.includes("angustia") || e.includes("estrés") || e.includes("cansado") || e.includes("ansiedad")) {
+      return `¿Cómo se siente eso en el cuerpo ahora mismo, ${nombre}? ¿En qué parte específicamente notas esa sensación?`;
+    }
+
+    // 6. Seguimiento Natural
+    if (t.length > 0) {
+      const preguntas = [
+        "Entiendo. ¿Y qué más hay ahí?",
+        `¿Cómo te afecta eso específicamente, ${nombre}?`,
+        "Te sigo, cuéntame un poco más sobre eso.",
+        "¿Qué es lo que más te hace ruido de eso que mencionas?"
+      ];
+      return pick(preguntas);
+    }
+
+    return "Cuéntame lo que necesites, aquí estoy.";
   }
 
+  // UI Events
   function send() {
     const v = inputEl.value;
-    inputEl.value = "";
     if (!v) return;
-
-    addLine("tú: " + v, "u");
-    const out = responder(v);
-    addLine("bot: " + out, "b");
-    inputEl.focus();
+    inputEl.value = "";
+    addLine("Tú: " + v, "u");
+    setTimeout(() => {
+      const out = responder(v);
+      addLine("Bot: " + out, "b");
+    }, 400);
   }
 
-  // UI events
   sendBtn.addEventListener("click", send);
-  inputEl.addEventListener("keydown", (e) => {
-    if (e.key === "Enter") {
-      e.preventDefault();
-      send();
-    }
-  });
+  inputEl.addEventListener("keydown", (e) => { if (e.key === "Enter") send(); });
 
-  // Mensaje inicial (sin profundidad, y coherente con "presentación 1 vez")
-  addLine("Sistema listo. Escribe “hola” para iniciar.", "b");
+  addLine("Sistema listo. Escribe algo para comenzar.", "b");
 </script>
+
+</body>
+</html>
